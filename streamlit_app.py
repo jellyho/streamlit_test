@@ -1,101 +1,135 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import time
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import SGDClassifier
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
 
-# --- 데이터 로드 및 전처리 ---
-@st.cache_data # 데이터를 캐시에 저장하여 매번 다시 로드하지 않도록 함
+# --- 1. 데이터 로드 및 전처리 ---
+@st.cache_data # 데이터 캐싱
 def load_data():
-    """Iris 데이터를 로드하고 2개의 클래스만 선택하여 반환합니다."""
+    """Iris 데이터를 로드하고 훈련/테스트셋으로 분할, 스케일링합니다."""
     iris = load_iris()
-    df = pd.DataFrame(data=iris.data, columns=iris.feature_names)
-    df['target'] = iris.target
+    X = iris.data
+    y = iris.target
+    class_names = iris.target_names
+
+    # 데이터 분할
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
     
-    # 로지스틱 회귀(이진 분류) 데모를 위해 2개의 클래스(0, 1)만 선택
-    df_binary = df[df['target'].isin([0, 1])].copy()
+    # SGD는 스케일링이 매우 중요합니다.
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
     
-    # target 이름을 문자로 변경 (선택 사항)
-    df_binary['target_name'] = df_binary['target'].map({0: iris.target_names[0], 1: iris.target_names[1]})
-    
-    X = df_binary[iris.feature_names]
-    y = df_binary['target']
-    return X, y, df_binary
+    return X_train_scaled, X_test, y_train, y_test, class_names, X_test_scaled
 
-X, y, df_binary = load_data()
+X_train, X_test_orig, y_train, y_test, class_names, X_test = load_data()
+all_classes = np.unique(y)
 
+# --- 2. Streamlit 앱 UI ---
 
-# --- Streamlit 앱 UI ---
+st.title("🚀 실시간 학습 과정 시각화 데모")
+st.write("`SGDClassifier` (확률적 경사 하강법) 모델이 Epoch마다 똑똑해지는 과정을 지켜보세요.")
 
-st.title("🌷 간단한 로지스틱 회귀(Logistic Regression) 데모")
-st.write("Iris 데이터셋의 두 개 클래스(setosa, versicolor)를 분류하는 모델을 학습시킵니다.")
-
-# --- 사이드바: 모델 파라미터 설정 ---
+# --- 3. 사이드바: 모델 하이퍼파라미터 ---
 st.sidebar.header("1. 모델 파라미터 설정")
 
-# C: 로지스틱 회귀의 규제 파라미터 (값이 작을수록 규제가 강해짐)
-C_parameter = st.sidebar.slider(
-    "C (규제 강도, 값이 클수록 규제 약함)", 
-    min_value=0.01, 
-    max_value=10.0, 
-    value=1.0, 
-    step=0.01
+n_epochs = st.sidebar.slider(
+    "총 학습 횟수 (Epochs)", 
+    min_value=10, 
+    max_value=200, 
+    value=50, 
+    step=10
 )
 
-# 테스트 데이터셋의 비율 설정
-test_size = st.sidebar.slider(
-    "테스트 데이터 비율", 
-    min_value=0.1, 
-    max_value=0.5, 
-    value=0.3, 
-    step=0.05
+# 학습률 (Learning Rate)
+learning_rate_init = st.sidebar.select_slider(
+    "학습률 (Learning Rate)",
+    options=[0.0001, 0.001, 0.01, 0.1, 0.5, 1.0],
+    value=0.01
+)
+
+st.sidebar.info(
+    """
+    - **Epochs**: 전체 데이터셋을 몇 번 반복해서 학습할지 정합니다.
+    - **Learning Rate**: 모델이 얼마나 '빠르게' 정답에 접근할지 보폭을 정합니다.
+    
+    **학습률이 너무 크면** 그래프가 심하게 널뛰고, 
+    **너무 작으면** 학습이 매우 느리게 진행됩니다.
+    """
 )
 
 st.sidebar.header("2. 데이터 확인")
-if st.sidebar.checkbox("사용한 데이터 미리보기"):
-    st.sidebar.write("총 {}개의 샘플 사용:".format(len(df_binary)))
-    st.sidebar.dataframe(df_binary.head())
+if st.sidebar.checkbox("사용한 테스트 데이터 원본 보기"):
+    st.sidebar.write(f"총 {len(X_test_orig)}개의 테스트 샘플:")
+    st.sidebar.dataframe(pd.DataFrame(X_test_orig, columns=load_iris().feature_names))
 
 
-# --- 메인 화면 ---
+# --- 4. 메인 화면: 학습 및 시각화 ---
 
-st.header("모델 학습 및 결과")
+st.header("모델 학습 및 실시간 결과")
 
 # '모델 학습' 버튼
-if st.button("모델 학습 시작하기"):
-    with st.spinner("데이터를 분할하고 모델을 학습시키는 중입니다..."):
-        # 1. 데이터 분할
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y
-        )
-        
-        # 2. 모델 초기화 (사용자 설정 C값 적용)
-        model = LogisticRegression(C=C_parameter, random_state=42)
-        
-        # 3. 모델 학습
-        model.fit(X_train, y_train)
-        
-        # 4. 예측
-        y_pred = model.predict(X_test)
-        
-        # 5. 성능 평가
-        accuracy = accuracy_score(y_test, y_pred)
-        cm = confusion_matrix(y_test, y_pred)
-        cm_df = pd.DataFrame(cm, columns=["예측: setosa", "예측: versicolor"], index=["실제: setosa", "실제: versicolor"])
+if st.button(f"{n_epochs} Epochs 동안 실시간 학습 시작!"):
+    
+    # (1) 모델 초기화
+    # loss='log_loss'는 로지스틱 회귀와 유사하게 작동합니다.
+    model = SGDClassifier(
+        loss='log_loss', 
+        max_iter=1,  # 1 Epoch씩 수동으로 제어할 것이므로 max_iter=1
+        learning_rate='constant', 
+        eta0=learning_rate_init, 
+        random_state=42,
+        warm_start=True # partial_fit을 사용하기 위해 True
+    )
+    
+    # (2) 시각화를 위한 빈 공간(placeholder) 생성
+    progress_bar = st.progress(0)
+    status_text = st.empty() # 현재 Epoch 상태 텍스트
+    chart_placeholder = st.empty() # 실시간 라인 차트
+    
+    history = [] # 정확도 기록
 
-    # 6. 결과 표시
+    # (3) 실시간 학습 루프
+    for epoch in range(n_epochs):
+        
+        # 1 Epoch 학습
+        model.partial_fit(X_train, y_train, classes=all_classes)
+        
+        # 테스트셋으로 성능 평가
+        y_pred = model.predict(X_test)
+        test_accuracy = accuracy_score(y_test, y_pred)
+        
+        # 기록 추가
+        history.append({'Epoch': epoch + 1, 'Test Accuracy': test_accuracy})
+        history_df = pd.DataFrame(history).set_index('Epoch')
+        
+        # (4) UI 업데이트
+        progress_bar.progress((epoch + 1) / n_epochs)
+        status_text.text(f"Epoch {epoch + 1}/{n_epochs} | 현재 테스트 정확도: {test_accuracy:.4f}")
+        chart_placeholder.line_chart(history_df)
+        
+        # 시각적 효과를 위해 아주 잠깐 멈춤
+        time.sleep(0.05) 
+
+    # (5) 학습 완료 후 최종 결과 표시
     st.success("🎉 모델 학습 완료!")
+    st.balloons()
     
-    st.subheader(f"모델 정확도 (Accuracy): {accuracy * 100:.2f}%")
+    st.subheader("최종 학습 결과")
+    st.write(f"**최종 테스트 정확도:** {test_accuracy * 100:.2f}%")
     
-    st.subheader("혼동 행렬 (Confusion Matrix)")
+    st.subheader("최종 혼동 행렬 (Confusion Matrix)")
+    cm = confusion_matrix(y_test, y_pred)
+    cm_df = pd.DataFrame(cm, columns=class_names, index=class_names)
     st.dataframe(cm_df)
-    st.write("""
-    - **혼동 행렬**은 모델이 얼마나 헷갈려하는지 보여줍니다.
-    - **대각선 (왼쪽 위 -> 오른쪽 아래)**의 숫자가 높을수록 좋습니다. (정확히 맞춘 개수)
-    - 대각선 **밖**의 숫자는 모델이 틀리게 예측한 개수입니다.
-    """)
 
 else:
-    st.info("사이드바에서 파라미터를 조절한 후 '모델 학습 시작하기' 버튼을 눌러주세요.")
+    st.info("사이드바에서 파라미터를 설정하고 '학습 시작' 버튼을 눌러주세요.")
+
