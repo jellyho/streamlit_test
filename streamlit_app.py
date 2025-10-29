@@ -16,7 +16,11 @@ def load_data():
     X = iris.data
     y = iris.target
     class_names = iris.target_names
-
+    
+    # --- 🐞 수정된 부분 1 ---
+    # `partial_fit`에 필요한 전체 클래스 목록을 함수 안에서 생성
+    all_classes = np.unique(y)
+    
     # 데이터 분할
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, random_state=42, stratify=y
@@ -27,10 +31,18 @@ def load_data():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    return X_train_scaled, X_test, y_train, y_test, class_names, X_test_scaled
+    # --- 🐞 수정된 부분 2 ---
+    # all_classes를 반환 값에 추가
+    return X_train_scaled, X_test, y_train, y_test, class_names, X_test_scaled, all_classes
 
-X_train, X_test_orig, y_train, y_test, class_names, X_test = load_data()
-all_classes = np.unique(y)
+# --- 🐞 수정된 부분 3 ---
+# 함수에서 반환하는 all_classes 변수를 받음
+X_train, X_test_orig, y_train, y_test, class_names, X_test, all_classes = load_data()
+
+# --- 🐞 수정된 부분 4 ---
+# 이 라인은 삭제 (y가 정의되지 않았으므로)
+# all_classes = np.unique(y) 
+
 
 # --- 2. Streamlit 앱 UI ---
 
@@ -79,14 +91,13 @@ st.header("모델 학습 및 실시간 결과")
 if st.button(f"{n_epochs} Epochs 동안 실시간 학습 시작!"):
     
     # (1) 모델 초기화
-    # loss='log_loss'는 로지스틱 회귀와 유사하게 작동합니다.
     model = SGDClassifier(
         loss='log_loss', 
-        max_iter=1,  # 1 Epoch씩 수동으로 제어할 것이므로 max_iter=1
+        max_iter=1,  
         learning_rate='constant', 
         eta0=learning_rate_init, 
         random_state=42,
-        warm_start=True # partial_fit을 사용하기 위해 True
+        warm_start=True 
     )
     
     # (2) 시각화를 위한 빈 공간(placeholder) 생성
@@ -100,6 +111,7 @@ if st.button(f"{n_epochs} Epochs 동안 실시간 학습 시작!"):
     for epoch in range(n_epochs):
         
         # 1 Epoch 학습
+        # `classes=all_classes`가 이제 정상적으로 작동합니다.
         model.partial_fit(X_train, y_train, classes=all_classes)
         
         # 테스트셋으로 성능 평가
